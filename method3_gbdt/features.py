@@ -24,6 +24,7 @@ import numpy.typing as npt
 import pandas as pd
 
 from er_common.pairs import PairTable
+from er_common.progress import stages
 from er_common.similarity import TokenSets, acronym_match, paired, prefix_match, tri_state
 from method2_tfidf_retrieval.retrieval import RetrievalResult
 from method2_tfidf_retrieval.scorer import tfidf_features
@@ -199,12 +200,20 @@ def context_features(pt: PairTable, df: pd.DataFrame) -> dict[str, F32]:
 def build_features(pt: PairTable, ret: RetrievalResult) -> pd.DataFrame:
     base = tfidf_features(pt, ret)
     df = pd.concat([ret.feats.reset_index(drop=True), base], axis=1)
-    for block in (name_features(pt), address_features(pt), frequency_features(pt)):
-        for k, v in block.items():
+    with stages(f"M3 extra features ({pt.n_pairs:,} pairs)", 4) as step:
+        step("name")
+        blocks = [name_features(pt)]
+        step("address")
+        blocks.append(address_features(pt))
+        step("name frequency")
+        blocks.append(frequency_features(pt))
+        for block in blocks:
+            for k, v in block.items():
+                df[k] = v
+        df["name_x_addr"] = (df["name_score"] * df["addr_score"]).astype(np.float32)
+        df["name_min_addr"] = np.fmin(df["name_score"], df["addr_score"]).astype(np.float32)
+        df["addr_missing"] = df["addr_score"].isna().astype(np.float32)
+        step("competition context")
+        for k, v in context_features(pt, df).items():
             df[k] = v
-    df["name_x_addr"] = (df["name_score"] * df["addr_score"]).astype(np.float32)
-    df["name_min_addr"] = np.fmin(df["name_score"], df["addr_score"]).astype(np.float32)
-    df["addr_missing"] = df["addr_score"].isna().astype(np.float32)
-    for k, v in context_features(pt, df).items():
-        df[k] = v
     return df.astype(np.float32)

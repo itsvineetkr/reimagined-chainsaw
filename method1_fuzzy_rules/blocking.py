@@ -24,6 +24,7 @@ import numpy.typing as npt
 import pandas as pd
 
 from er_common.pairs import unique_pairs
+from er_common.progress import progress
 from er_common.similarity import paired
 
 IntArr = npt.NDArray[np.int64]
@@ -60,26 +61,29 @@ def record_keys(name_skel: str, name_core: str, acronym: str, postal: str, house
     return keys
 
 
-def _keys(df: pd.DataFrame) -> list[list[str]]:
-    return [record_keys(*row) for row in zip(*(df[c].tolist() for c in KEY_COLUMNS), strict=True)]
+def _keys(df: pd.DataFrame, desc: str) -> list[list[str]]:
+    rows = zip(*(df[c].tolist() for c in KEY_COLUMNS), strict=True)
+    return [record_keys(*row) for row in progress(rows, desc, len(df), "rec")]
 
 
 def block(s1: pd.DataFrame, s23: pd.DataFrame, cfg: BlockingConfig) -> tuple[IntArr, IntArr, IntArr]:
     """Return (s1_idx, c_idx, n_shared_keys) for the retained candidate pairs."""
     left: dict[str, list[int]] = defaultdict(list)
     right: dict[str, list[int]] = defaultdict(list)
-    s1_keys = _keys(s1)
-    for i, ks in enumerate(s1_keys):
+    s1_keys = _keys(s1, "block keys S1")
+    for i, ks in enumerate(progress(s1_keys, "index S1 keys", len(s1_keys), "rec")):
         for k in set(ks):
             left[k].append(i)
-    for j, ks in enumerate(_keys(s23)):
+    s23_keys = _keys(s23, "block keys S2+S3")
+    for j, ks in enumerate(progress(s23_keys, "index S2+S3 keys", len(s23_keys), "rec")):
         for k in set(ks):
             right[k].append(j)
+    del s23_keys
 
     parts_i: list[IntArr] = []
     parts_j: list[IntArr] = []
     covered = np.zeros(len(s1), dtype=bool)
-    for key in sorted(left):
+    for key in progress(sorted(left), "expand blocks", len(left), "key"):
         li, rj = left[key], right.get(key)
         if not rj or len(li) * len(rj) > cfg.max_block_pairs:
             continue
@@ -89,7 +93,8 @@ def block(s1: pd.DataFrame, s23: pd.DataFrame, cfg: BlockingConfig) -> tuple[Int
         parts_j.append(b)
         covered[li] = True
 
-    for i in np.flatnonzero(~covered):  # fallback: smallest non-empty block for this record
+    uncovered = np.flatnonzero(~covered).tolist()  # fallback: smallest non-empty block for these records
+    for i in progress(uncovered, "fallback blocks", len(uncovered), "rec"):
         sizes = [(len(right[k]), k) for k in set(s1_keys[i]) if k in right]
         if sizes:
             _, k = min(sizes)

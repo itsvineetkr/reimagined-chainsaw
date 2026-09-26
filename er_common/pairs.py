@@ -9,6 +9,8 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from er_common.progress import progress
+
 IntArr = npt.NDArray[np.int64]
 BoolArr = npt.NDArray[np.bool_]
 FloatArr = npt.NDArray[np.float64]
@@ -55,7 +57,10 @@ class PairTable:
         c_ids = self.c_ids
         true_pairs = {(s, c) for s, cs in gt.items() for c in cs}
         return np.fromiter(
-            ((s1_ids[i], c_ids[j]) in true_pairs for i, j in zip(self.s1_idx, self.c_idx, strict=True)),
+            (
+                (s1_ids[i], c_ids[j]) in true_pairs
+                for i, j in progress(zip(self.s1_idx, self.c_idx, strict=True), "label pairs", self.n_pairs, "pair")
+            ),
             dtype=bool,
             count=self.n_pairs,
         )
@@ -72,7 +77,7 @@ class PairTable:
         s1_ids = self.s1["entity_id"].to_numpy()
         c_ids = self.c_ids
         out: dict[str, list[str]] = {s: [] for s in s1_ids}
-        for i in order:
+        for i in progress(order, "collect id lists", len(order), "pair"):
             out[s1_ids[self.s1_idx[i]]].append(c_ids[self.c_idx[i]])
         return out
 

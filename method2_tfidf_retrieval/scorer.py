@@ -22,6 +22,7 @@ import pandas as pd
 
 from er_common.decision import exclusive_mask, threshold_margin
 from er_common.pairs import PairTable
+from er_common.progress import stages
 from er_common.similarity import TfidfSpace, TokenSets, cosine_pairs, paired, tri_state
 from er_common.tuning import Dim
 from method2_tfidf_retrieval.retrieval import RetrievalResult
@@ -38,24 +39,29 @@ def tfidf_features(pt: PairTable, ret: RetrievalResult) -> pd.DataFrame:
     a, b, ia, ib = pt.s1, pt.s23, pt.s1_idx, pt.c_idx
     nq, nd = ret.spaces["name_char"]
     aq, ad = ret.spaces["addr_char"]
-    wn_q, wn_d = TfidfSpace("word", (1, 1)).fit_transform(a["name_core"].tolist(), b["name_core"].tolist())
-    wa_q, wa_d = TfidfSpace("word", (1, 1)).fit_transform(a["addr_core"].tolist(), b["addr_core"].tolist())
-    na, nb = _col(a, "name_core", ia), _col(b, "name_core", ib)
-    aa, ab = _col(a, "addr_core", ia), _col(b, "addr_core", ib)
-    nums = TokenSets(a["nums"].tolist(), b["nums"].tolist()).features(ia, ib)
-    f = {
-        "name_char_cos": cosine_pairs(nq, nd, ia, ib),
-        "name_word_cos": cosine_pairs(wn_q, wn_d, ia, ib),
-        "name_tsort": paired(na, nb, "tsort"),
-        "name_jw": paired(na, nb, "jw"),
-        "addr_char_cos": cosine_pairs(aq, ad, ia, ib),
-        "addr_word_cos": cosine_pairs(wa_q, wa_d, ia, ib),
-        "addr_tset": paired(aa, ab, "tset"),
-        "postal": tri_state(_col(a, "postal", ia), _col(b, "postal", ib)),
-        "house": tri_state(_col(a, "house", ia), _col(b, "house", ib)),
-        "nums_jaccard": nums["jaccard"],
-        "country": tri_state(_col(a, "country_norm", ia), _col(b, "country_norm", ib)),
-    }
+    f: dict[str, npt.NDArray[np.float32]] = {}
+    with stages(f"M2 features ({len(ia):,} pairs)", 5) as step:
+        step("word TF-IDF spaces")
+        wn_q, wn_d = TfidfSpace("word", (1, 1)).fit_transform(a["name_core"].tolist(), b["name_core"].tolist())
+        wa_q, wa_d = TfidfSpace("word", (1, 1)).fit_transform(a["addr_core"].tolist(), b["addr_core"].tolist())
+        step("name TF-IDF / fuzzy")
+        na, nb = _col(a, "name_core", ia), _col(b, "name_core", ib)
+        f["name_char_cos"] = cosine_pairs(nq, nd, ia, ib)
+        f["name_word_cos"] = cosine_pairs(wn_q, wn_d, ia, ib)
+        f["name_tsort"] = paired(na, nb, "tsort")
+        f["name_jw"] = paired(na, nb, "jw")
+        step("address TF-IDF / fuzzy")
+        aa, ab = _col(a, "addr_core", ia), _col(b, "addr_core", ib)
+        f["addr_char_cos"] = cosine_pairs(aq, ad, ia, ib)
+        f["addr_word_cos"] = cosine_pairs(wa_q, wa_d, ia, ib)
+        f["addr_tset"] = paired(aa, ab, "tset")
+        step("numbers")
+        nums = TokenSets(a["nums"].tolist(), b["nums"].tolist()).features(ia, ib)
+        step("postal / house / country")
+        f["postal"] = tri_state(_col(a, "postal", ia), _col(b, "postal", ib))
+        f["house"] = tri_state(_col(a, "house", ia), _col(b, "house", ib))
+        f["nums_jaccard"] = nums["jaccard"]
+        f["country"] = tri_state(_col(a, "country_norm", ia), _col(b, "country_norm", ib))
     df = pd.DataFrame(f)
     with np.errstate(all="ignore"):
         name_cols = ["name_char_cos", "name_word_cos", "name_tsort", "name_jw"]

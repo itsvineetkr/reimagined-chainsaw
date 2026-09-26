@@ -19,6 +19,8 @@ from functools import cache
 
 import pandas as pd
 
+from er_common.progress import progress
+
 # --------------------------------------------------------------------------------------------
 # Lexicons
 # --------------------------------------------------------------------------------------------
@@ -736,8 +738,9 @@ NORM_COLUMNS = (
 
 def normalize_records(df: pd.DataFrame) -> pd.DataFrame:
     """Return ``df`` with the normalised columns in :data:`NORM_COLUMNS` appended."""
-    names = [normalize_name(x) for x in df["business_name"].tolist()]
-    addrs = [normalize_address(x) for x in df["business_address"].tolist()]
+    n = len(df)
+    names = [normalize_name(x) for x in progress(df["business_name"].tolist(), "normalise names", n, "rec")]
+    addrs = [normalize_address(x) for x in progress(df["business_address"].tolist(), "normalise addresses", n, "rec")]
     out = df.copy()
     out["name_norm"] = [n.norm for n in names]
     out["name_core"] = [n.core for n in names]

@@ -10,6 +10,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from er_common.progress import bar
 from method3_gbdt.features import MONOTONE_INCREASING
 
 IntArr = npt.NDArray[np.int64]
@@ -64,6 +65,19 @@ def _es_split(groups: IntArr, fraction: float, seed: int) -> BoolArr:
     return np.isin(groups, held)
 
 
+def _round_bar(desc: str, total: int) -> tuple[object, object]:
+    """LightGBM callback that advances a progress bar once per boosting round."""
+    pb = bar(desc, total, "round")
+
+    def cb(env: lgb.callback.CallbackEnv) -> None:
+        pb.update(1)
+        if env.evaluation_result_list:
+            _, metric, value, _ = env.evaluation_result_list[0][:4]
+            pb.set_postfix_str(f"{metric}={value:.5f}", refresh=False)
+
+    return pb, cb
+
+
 def train(
     x: pd.DataFrame,
     y: BoolArr,
@@ -80,16 +94,20 @@ def train(
         es = _es_split(groups, p.es_fraction, seed)
         dtrain = lgb.Dataset(x.loc[~es], label=y[~es].astype(int), feature_name=features, free_raw_data=True)
         dvalid = lgb.Dataset(x.loc[es], label=y[es].astype(int), reference=dtrain)
-        booster = lgb.train(
-            params,
-            dtrain,
-            num_boost_round=p.max_rounds,
-            valid_sets=[dvalid],
-            callbacks=[lgb.early_stopping(p.early_stopping, verbose=False)],
-        )
+        pb, cb = _round_bar("LightGBM (early stopping)", p.max_rounds)
+        with pb:  # type: ignore[attr-defined]
+            booster = lgb.train(
+                params,
+                dtrain,
+                num_boost_round=p.max_rounds,
+                valid_sets=[dvalid],
+                callbacks=[lgb.early_stopping(p.early_stopping, verbose=False), cb],  # type: ignore[list-item]
+            )
         return booster, int(booster.best_iteration or p.max_rounds)
     dtrain = lgb.Dataset(x, label=y.astype(int), feature_name=features, free_raw_data=True)
-    booster = lgb.train(params, dtrain, num_boost_round=max(1, n_rounds))
+    pb, cb = _round_bar("LightGBM (final fit)", max(1, n_rounds))
+    with pb:  # type: ignore[attr-defined]
+        booster = lgb.train(params, dtrain, num_boost_round=max(1, n_rounds), callbacks=[cb])  # type: ignore[list-item]
     return booster, n_rounds
 
 

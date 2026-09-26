@@ -23,6 +23,7 @@ import pandas as pd
 import scipy.sparse as sp
 from sklearn.feature_extraction.text import CountVectorizer
 
+from er_common.progress import progress, stages
 from er_common.similarity import TfidfSpace, sparse_topk
 
 IntArr = npt.NDArray[np.int64]
@@ -94,7 +95,8 @@ def _postal_channel(
     out_i: list[int] = []
     out_j: list[int] = []
     out_r: list[float] = []
-    for i, code in enumerate(s1["postal"].to_numpy()):
+    codes = s1["postal"].to_numpy()
+    for i, code in enumerate(progress(codes, "postal block", len(codes), "rec")):
         members = blocks.get(code) if code else None
         if not members:
             continue
@@ -108,9 +110,15 @@ def _postal_channel(
 
 
 def retrieve(s1: pd.DataFrame, s23: pd.DataFrame, cfg: RetrievalConfig) -> RetrievalResult:
-    name_q, name_d = TfidfSpace("char_wb", (2, 4)).fit_transform(name_text(s1), name_text(s23))
-    addr_q, addr_d = TfidfSpace("char_wb", (3, 4)).fit_transform(s1["addr_core"].tolist(), s23["addr_core"].tolist())
-    bm_q, bm_d = BM25(cfg.bm25_k1, cfg.bm25_b).fit_transform(bm25_text(s1), bm25_text(s23))
+    with stages("fit retrieval spaces", 3) as step:
+        step("name char TF-IDF")
+        name_q, name_d = TfidfSpace("char_wb", (2, 4)).fit_transform(name_text(s1), name_text(s23))
+        step("address char TF-IDF")
+        addr_q, addr_d = TfidfSpace("char_wb", (3, 4)).fit_transform(
+            s1["addr_core"].tolist(), s23["addr_core"].tolist()
+        )
+        step("BM25")
+        bm_q, bm_d = BM25(cfg.bm25_k1, cfg.bm25_b).fit_transform(bm25_text(s1), bm25_text(s23))
     channels = {
         "name_char": (name_q, name_d, cfg.k_name),
         "addr_char": (addr_q, addr_d, cfg.k_addr),
@@ -118,23 +126,27 @@ def retrieve(s1: pd.DataFrame, s23: pd.DataFrame, cfg: RetrievalConfig) -> Retri
     }
     source = s23["source"].to_numpy()
     rows: list[pd.DataFrame] = []
-    for src in sorted(set(source)):
+    sources = sorted(set(source))
+    for src, (ch, (q, d, k)) in progress(
+        [(src, item) for src in sources for item in channels.items()], "retrieval channels", len(sources) * 3, "channel"
+    ):
         src_rows = np.flatnonzero(source == src).astype(np.int64)
-        for ch, (q, d, k) in channels.items():
-            idx, sc = sparse_topk(q, d[src_rows], k)
-            n_q, kk = idx.shape
-            ok = sc.ravel() > 0
-            rows.append(
-                pd.DataFrame(
-                    {
-                        "s1_idx": np.repeat(np.arange(n_q), kk)[ok],
-                        "c_idx": src_rows[idx.ravel()][ok],
-                        "channel": ch,
-                        "rank": np.tile(np.arange(1, kk + 1), n_q)[ok],
-                        "score": sc.ravel()[ok],
-                    }
-                )
+        idx, sc = sparse_topk(q, d[src_rows], k)
+        n_q, kk = idx.shape
+        ok = sc.ravel() > 0
+        rows.append(
+            pd.DataFrame(
+                {
+                    "s1_idx": np.repeat(np.arange(n_q), kk)[ok],
+                    "c_idx": src_rows[idx.ravel()][ok],
+                    "channel": ch,
+                    "rank": np.tile(np.arange(1, kk + 1), n_q)[ok],
+                    "score": sc.ravel()[ok],
+                }
             )
+        )
+    for src in sources:
+        src_rows = np.flatnonzero(source == src).astype(np.int64)
         pi, pj, pr = _postal_channel(s1, s23, src_rows, name_q, name_d, cfg.k_postal)
         rows.append(
             pd.DataFrame(

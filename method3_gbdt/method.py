@@ -28,6 +28,7 @@ from er_common.folds import stratified_s1_folds
 from er_common.io import SplitData
 from er_common.metrics import GroupedEvaluator
 from er_common.pairs import PairTable
+from er_common.progress import progress
 from method2_tfidf_retrieval.method import build_retrieval_pairs
 from method2_tfidf_retrieval.retrieval import RetrievalConfig
 from method3_gbdt import model as gbdt
@@ -104,7 +105,7 @@ class GbdtMethod:
         oof = np.full(pt.n_pairs, np.nan)
         iters: list[int] = []
         pair_fold = folds[pt.s1_idx]
-        for k in range(n_folds):
+        for k in progress(range(n_folds), "out-of-fold models", n_folds, "fold"):
             t0 = time.perf_counter()
             tr = (pair_fold != k) & (pair_fold >= 0)
             te = pair_fold == k
@@ -130,7 +131,7 @@ class GbdtMethod:
         results: dict[str, float] = {}
         final_pred = np.zeros(pt.n_pairs, dtype=bool)
         final_q = np.zeros(pt.n_pairs)
-        for variant, (excl, strat) in ABLATIONS.items():
+        for variant, (excl, strat) in progress(ABLATIONS.items(), "decision-layer ablation", len(ABLATIONS), "variant"):
             pred = np.zeros(pt.n_pairs, dtype=bool)
             q_all = np.zeros(pt.n_pairs)
             for k in range(n_folds):
@@ -161,7 +162,7 @@ class GbdtMethod:
         uniq = [c for c in sorted(set(countries)) if (countries == c).sum() >= 50]
         if len(uniq) < 2:
             return {"skipped": "fewer than two countries with >= 50 S1 records"}
-        for c in uniq:
+        for c in progress(uniq, "leave-one-country-out", len(uniq), "country"):
             held = countries == c
             tr = ~held[pt.s1_idx]
             booster, _ = gbdt.train(pt.feats.loc[tr], label[tr], pt.s1_idx[tr], self._params(), seed=self.config.seed)

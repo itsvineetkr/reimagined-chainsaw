@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from er_common.progress import stages
+
 RECORD_COLUMNS = ("entity_id", "business_name", "business_address", "country")
 GT_COLUMNS = ("source1_entity_id", "matched_entity_ids")
 MATCH_HEADER = ("source1_entity_id", "matched_entity_ids")
@@ -108,16 +110,21 @@ def load_ground_truth(path: str | Path) -> dict[str, tuple[str, ...]]:
 def load_split(data_dir: str | Path, split: str) -> SplitData:
     """Load ``<data_dir>/<split>/<split>_source{1,2,3}.tsv`` (+ ground truth for train)."""
     base = Path(data_dir) / split
-    s1 = _load_records(base / f"{split}_source1.tsv", "S1-")
-    s2 = _load_records(base / f"{split}_source2.tsv", "S2-")
-    s3 = _load_records(base / f"{split}_source3.tsv", "S3-")
+    with stages(f"load {split}", 4) as step:
+        step(f"{split}_source1.tsv")
+        s1 = _load_records(base / f"{split}_source1.tsv", "S1-")
+        step(f"{split}_source2.tsv")
+        s2 = _load_records(base / f"{split}_source2.tsv", "S2-")
+        step(f"{split}_source3.tsv")
+        s3 = _load_records(base / f"{split}_source3.tsv", "S3-")
+        step("ground truth")
+        gt_path = base / f"{split}_ground_truth.tsv"
+        gt = load_ground_truth(gt_path) if gt_path.is_file() else None
     s2["source"] = "S2"
     s3["source"] = "S3"
     s23 = pd.concat([s2, s3], ignore_index=True)
     s1["source"] = "S1"
 
-    gt_path = base / f"{split}_ground_truth.tsv"
-    gt = load_ground_truth(gt_path) if gt_path.is_file() else None
     if gt is not None:
         _check_gt(gt, s1, s23, gt_path)
     return SplitData(split=split, s1=s1, s23=s23, gt=gt)

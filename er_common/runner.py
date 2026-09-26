@@ -27,6 +27,7 @@ from typing import Any, Protocol
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 from er_common.folds import stratified_s1_folds
 from er_common.io import (
@@ -40,6 +41,7 @@ from er_common.io import (
 )
 from er_common.metrics import candidate_recall, evaluate
 from er_common.pairs import PairTable
+from er_common.progress import progress, set_enabled
 
 BoolArr = npt.NDArray[np.bool_]
 FloatArr = npt.NDArray[np.float64]
@@ -68,7 +70,7 @@ def generic_cross_validate(
     pred = np.zeros(pt.n_pairs, dtype=bool)
     score = np.zeros(pt.n_pairs, dtype=np.float64)
     summaries: list[dict[str, Any]] = []
-    for k in range(n_folds):
+    for k in progress(range(n_folds), "cv folds", n_folds, "fold"):
         t0 = time.perf_counter()
         model = method.fit(pt, gt, folds != k)
         mask, sc = method.predict(model, pt)
@@ -145,7 +147,8 @@ def _error_dump(pt: PairTable, gt: GT, pred: BoolArr, score: FloatArr, path: Pat
     s1_ids = pt.s1["entity_id"].to_numpy()
     rows = []
     for kind, sel in (("false_positive", pred & ~label), ("false_negative", ~pred & label)):
-        for i in np.flatnonzero(sel):
+        idx = np.flatnonzero(sel)
+        for i in progress(idx, f"error dump ({kind})", len(idx), "pair"):
             a, b = pt.s1.iloc[pt.s1_idx[i]], pt.s23.iloc[pt.c_idx[i]]
             rows.append(
                 {
@@ -164,7 +167,7 @@ def _error_dump(pt: PairTable, gt: GT, pred: BoolArr, score: FloatArr, path: Pat
     retrieved = {(s1_ids[i], pt.c_ids[j]) for i, j in zip(pt.s1_idx, pt.c_idx, strict=True)}
     c_lookup = pt.s23.set_index("entity_id")
     s1_lookup = pt.s1.set_index("entity_id")
-    for s1, cs in gt.items():
+    for s1, cs in progress(gt.items(), "error dump (blocking misses)", len(gt), "S1"):
         for c in cs:
             if (s1, c) not in retrieved:
                 a, b = s1_lookup.loc[s1], c_lookup.loc[c]
@@ -348,9 +351,11 @@ def main(method: Method, argv: Sequence[str] | None = None) -> None:
     ap.add_argument(
         "--test-gt", type=Path, default=None, help="optional ground truth for the test split (synthetic data only)"
     )
+    ap.add_argument("--no-progress", action="store_true", help="disable progress bars (e.g. when logging to a file)")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stderr)
+    set_enabled(not args.no_progress)
     if args.config is not None:
         overrides = json.loads(args.config.read_text(encoding="utf-8"))
         method.config = dataclasses.replace(method.config, **overrides)
@@ -359,8 +364,9 @@ def main(method: Method, argv: Sequence[str] | None = None) -> None:
     out_dir = args.out_dir or Path("outputs") / method.name
     log.info("%s config: %s", method.name, method.config)
 
-    train = load_train(method, args.data_dir)
-    if args.command in ("validate", "all"):
-        run_validate(method, args.data_dir, out_dir, args.folds, method.config.seed, train)
-    if args.command in ("predict", "all"):
-        run_predict(method, args.data_dir, out_dir, args.test_gt, train)
+    with logging_redirect_tqdm():  # log lines print above the bars instead of breaking them
+        train = load_train(method, args.data_dir)
+        if args.command in ("validate", "all"):
+            run_validate(method, args.data_dir, out_dir, args.folds, method.config.seed, train)
+        if args.command in ("predict", "all"):
+            run_predict(method, args.data_dir, out_dir, args.test_gt, train)

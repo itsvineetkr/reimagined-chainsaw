@@ -34,6 +34,9 @@ python scripts/make_submission.py --method method3_gbdt --team <team> \
 ```
 
 The same commands work for `method1_fuzzy_rules` and `method2_tfidf_retrieval`.
+Every long stage shows a tqdm progress bar on stderr: loading, normalisation, blocking and
+retrieval, each feature step, parameter tuning, CV folds and LightGBM boosting rounds. Pass
+`--no-progress` to turn the bars off, for example when redirecting output to a log file.
 `validate` and `predict` run the two halves separately.
 
 **No data yet?** Generate a synthetic dataset with the same layout and noise patterns, including a

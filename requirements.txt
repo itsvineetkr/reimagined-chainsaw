@@ -1,7 +1,8 @@
-# Runtime dependencies (all MIT / BSD / Apache-2.0 licensed)
+# Runtime dependencies (MIT / BSD / Apache-2.0; tqdm is MPL-2.0 AND MIT)
 numpy==2.2.6
 pandas==2.2.3
 scipy==1.15.3
 scikit-learn==1.6.1
 rapidfuzz==3.13.0
 lightgbm==4.6.0
+tqdm==4.67.1

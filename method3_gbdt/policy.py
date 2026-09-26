@@ -28,6 +28,7 @@ import numpy.typing as npt
 from er_common.decision import PlattCalibrator, exclusive_mask, expected_fbeta_topk, threshold_margin
 from er_common.metrics import GroupedEvaluator
 from er_common.pairs import PairTable
+from er_common.progress import progress
 
 FloatArr = npt.NDArray[np.float64]
 BoolArr = npt.NDArray[np.bool_]
@@ -101,7 +102,7 @@ def fit_policy(
         if best is None or score > best[0] + 1e-9:
             best = (score, pol)
 
-    for excl in exclusivity:
+    for excl in progress(exclusivity, "fit decision policy", len(exclusivity), "mode"):
         q = apply_exclusivity(p, pt.c_idx, excl)
         base = Policy(calib_a=cal.a, calib_b=cal.b, exclusivity=excl)
         if "expected_f" in strategies:

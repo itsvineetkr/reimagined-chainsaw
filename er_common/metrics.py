@@ -19,6 +19,8 @@ from dataclasses import asdict, dataclass
 import numpy as np
 import numpy.typing as npt
 
+from er_common.progress import progress
+
 BETA = 0.5
 
 FloatArr = npt.NDArray[np.float64]
@@ -74,7 +76,7 @@ def evaluate(
     recs: list[float] = []
     tp_tot = pred_tot = true_tot = 0
     n_single = single_ok = false_merge = 0
-    for s1 in s1_ids:
+    for s1 in progress(s1_ids, "score entities", len(s1_ids), "S1"):
         p = set(pred.get(s1, ()))
         t = set(gt.get(s1, ()))
         tp = len(p & t)
@@ -116,7 +118,7 @@ def candidate_recall(
     hit = total = full = 0
     ceiling: list[float] = []
     sizes: list[int] = []
-    for s1 in s1_ids:
+    for s1 in progress(s1_ids, "score entities", len(s1_ids), "S1"):
         c = set(candidates.get(s1, ()))
         t = set(gt.get(s1, ()))
         sizes.append(len(c))

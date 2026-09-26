@@ -26,6 +26,7 @@ import pandas as pd
 
 from er_common.decision import exclusive_mask, threshold_margin
 from er_common.pairs import PairTable
+from er_common.progress import stages
 from er_common.similarity import acronym_match, paired, tri_state
 from er_common.tuning import Dim
 
@@ -40,23 +41,28 @@ def fuzzy_features(pt: PairTable) -> pd.DataFrame:
     def col(df: pd.DataFrame, name: str, idx: npt.NDArray[np.int64]) -> npt.NDArray[Any]:
         return df[name].to_numpy()[idx]
 
-    na, nb = col(a, "name_core", ia), col(b, "name_core", ib)
-    f: dict[str, npt.NDArray[np.float32]] = {
-        "name_tsort": paired(na, nb, "tsort"),
-        "name_tset": paired(na, nb, "tset"),
-        "name_jw": paired(na, nb, "jw"),
-        "name_skel": paired(col(a, "name_skel", ia), col(b, "name_skel", ib), "ratio"),
-        "name_acronym": acronym_match(na, col(a, "name_acronym", ia), nb, col(b, "name_acronym", ib)),
-    }
-    alt_a, alt_b = col(a, "name_alt", ia), col(b, "name_alt", ib)
-    alt = np.fmax(paired(alt_a, nb, "tsort"), paired(na, alt_b, "tsort"))
-    f["name_alt"] = np.fmax(alt, paired(alt_a, alt_b, "tsort"))
-    aa, ab = col(a, "addr_core", ia), col(b, "addr_core", ib)
-    f["addr_tset"] = paired(aa, ab, "tset")
-    f["addr_tsort"] = paired(aa, ab, "tsort")
-    f["postal"] = tri_state(col(a, "postal", ia), col(b, "postal", ib))
-    f["house"] = tri_state(col(a, "house", ia), col(b, "house", ib))
-    f["country"] = tri_state(col(a, "country_norm", ia), col(b, "country_norm", ib))
+    f: dict[str, npt.NDArray[np.float32]] = {}
+    with stages(f"M1 features ({len(ia):,} pairs)", 5) as step:
+        step("name fuzzy")
+        na, nb = col(a, "name_core", ia), col(b, "name_core", ib)
+        f["name_tsort"] = paired(na, nb, "tsort")
+        f["name_tset"] = paired(na, nb, "tset")
+        f["name_jw"] = paired(na, nb, "jw")
+        step("name skeleton / acronym")
+        f["name_skel"] = paired(col(a, "name_skel", ia), col(b, "name_skel", ib), "ratio")
+        f["name_acronym"] = acronym_match(na, col(a, "name_acronym", ia), nb, col(b, "name_acronym", ib))
+        step("trade names")
+        alt_a, alt_b = col(a, "name_alt", ia), col(b, "name_alt", ib)
+        alt = np.fmax(paired(alt_a, nb, "tsort"), paired(na, alt_b, "tsort"))
+        f["name_alt"] = np.fmax(alt, paired(alt_a, alt_b, "tsort"))
+        step("address fuzzy")
+        aa, ab = col(a, "addr_core", ia), col(b, "addr_core", ib)
+        f["addr_tset"] = paired(aa, ab, "tset")
+        f["addr_tsort"] = paired(aa, ab, "tsort")
+        step("postal / house / country")
+        f["postal"] = tri_state(col(a, "postal", ia), col(b, "postal", ib))
+        f["house"] = tri_state(col(a, "house", ia), col(b, "house", ib))
+        f["country"] = tri_state(col(a, "country_norm", ia), col(b, "country_norm", ib))
     df = pd.DataFrame(f)
     name = np.nanmax(
         np.vstack(

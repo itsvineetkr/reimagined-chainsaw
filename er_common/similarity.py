@@ -17,6 +17,8 @@ from rapidfuzz import fuzz, process
 from rapidfuzz.distance import JaroWinkler, Levenshtein
 from sklearn.feature_extraction.text import TfidfVectorizer
 
+from er_common.progress import progress
+
 F32 = npt.NDArray[np.float32]
 IntArr = npt.NDArray[np.int64]
 Texts = Sequence[str] | npt.NDArray[Any]  # lists or pandas-derived object arrays of str
@@ -33,10 +35,19 @@ SCORERS: dict[str, tuple[Callable[..., float], float]] = {
 }
 
 
+PAIR_CHUNK = 500_000  # pairs per rapidfuzz call; also the progress-bar granularity
+
+
 def paired(left: Texts, right: Texts, scorer: str, missing_nan: bool = True) -> F32:
     fn, scale = SCORERS[scorer]
-    out = process.cpdist(list(left), list(right), scorer=fn, workers=WORKERS, dtype=np.float32)
-    out = np.asarray(out, dtype=np.float32) / np.float32(scale)
+    n = len(left)
+    out = np.empty(n, dtype=np.float32)
+    starts = range(0, n, PAIR_CHUNK)
+    it = progress(starts, f"fuzzy {scorer}", len(starts), "chunk") if n > PAIR_CHUNK else starts
+    for s in it:
+        e = min(s + PAIR_CHUNK, n)
+        out[s:e] = process.cpdist(list(left[s:e]), list(right[s:e]), scorer=fn, workers=WORKERS, dtype=np.float32)
+    out /= np.float32(scale)
     if missing_nan:
         empty = np.fromiter((not a or not b for a, b in zip(left, right, strict=True)), bool, len(left))
         out[empty] = np.nan
@@ -46,7 +57,8 @@ def paired(left: Texts, right: Texts, scorer: str, missing_nan: bool = True) -> 
 def rowwise_dot(a: sp.csr_matrix, b: sp.csr_matrix, ia: IntArr, ib: IntArr, chunk: int = 200_000) -> F32:
     """sum_k a[ia[n], k] * b[ib[n], k] for every n, chunked to bound memory."""
     out = np.empty(len(ia), dtype=np.float32)
-    for s in range(0, len(ia), chunk):
+    starts = range(0, len(ia), chunk)
+    for s in progress(starts, "row dot products", len(starts), "chunk") if len(ia) > chunk else starts:
         e = min(s + chunk, len(ia))
         prod = a[ia[s:e]].multiply(b[ib[s:e]])
         out[s:e] = np.asarray(prod.sum(axis=1)).ravel()
@@ -146,7 +158,7 @@ def sparse_topk(queries: sp.csr_matrix, docs: sp.csr_matrix, k: int, max_cells: 
         return idx_out, sc_out
     docs_t = docs.T.tocsc()
     chunk = max(1, min(n_q, max_cells // max(n_d, 1)))
-    for s in range(0, n_q, chunk):
+    for s in progress(range(0, n_q, chunk), f"top-{k} retrieval", (n_q + chunk - 1) // chunk, "chunk"):
         e = min(s + chunk, n_q)
         dense = (queries[s:e] @ docs_t).toarray().astype(np.float32, copy=False)
         part = np.argpartition(-dense, kth=k - 1, axis=1)[:, :k] if k < n_d else np.tile(np.arange(n_d), (e - s, 1))
