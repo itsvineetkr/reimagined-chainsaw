@@ -1,0 +1,15 @@
+# data & run artefacts (challenge data is not redistributed)
+dataset/
+outputs/
+submissions/
+*.zip
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+dataset_synth/

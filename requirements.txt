@@ -1,0 +1,7 @@
+# Runtime dependencies (all MIT / BSD / Apache-2.0 licensed)
+numpy==2.2.6
+pandas==2.2.3
+scipy==1.15.3
+scikit-learn==1.6.1
+rapidfuzz==3.13.0
+lightgbm==4.6.0
